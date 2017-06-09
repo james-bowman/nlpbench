@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/gonum/matrix/mat64"
+	"github.com/james-bowman/sparse"
 )
 
 type Transformer interface {
@@ -42,7 +43,7 @@ func (t *TfidfTransformer1) Transform(mat mat64.Matrix) (*mat64.Dense, error) {
 	product := mat64.NewDense(m, n, nil)
 
 	// simply multiply the matrix by our idf transform (the diagonal matrix of term weights)
-	product.Product(t.transform, mat)
+	product.Mul(t.transform, mat)
 
 	return product, nil
 }
@@ -156,5 +157,51 @@ func (t *TfidfTransformer3) Transform(mat mat64.Matrix) (*mat64.Dense, error) {
 // same matrix.  This is a convenience where separate trianing data is not being
 // used to fit the model i.e. the model is fitted on the fly to the test data.
 func (t *TfidfTransformer3) FitTransform(mat mat64.Matrix) (*mat64.Dense, error) {
+	return t.Fit(mat).Transform(mat)
+}
+
+type SparseTfidfTransformer struct {
+	transform mat64.Matrix
+}
+
+func (t *SparseTfidfTransformer) Fit(mat mat64.Matrix) *SparseTfidfTransformer {
+	m, n := mat.Dims()
+
+	weights := make([]float64, m)
+
+	csr, ok := mat.(*sparse.CSR)
+
+	for i := 0; i < m; i++ {
+		df := 0
+		if ok {
+			df = csr.RowNNZ(i)
+		} else {
+			for j := 0; j < n; j++ {
+				if mat.At(i, j) != 0 {
+					df++
+				}
+			}
+		}
+		idf := math.Log(float64(1+n) / float64(1+df))
+		weights[i] = idf
+	}
+
+	// build a diagonal matrix from array of term weighting values for subsequent
+	// multiplication with term document matrics
+	t.transform = sparse.NewDIA(m, weights)
+
+	return t
+}
+
+func (t *SparseTfidfTransformer) Transform(mat mat64.Matrix) (mat64.Matrix, error) {
+	product := &sparse.CSR{}
+
+	// simply multiply the matrix by our idf transform (the diagonal matrix of term weights)
+	product.Mul(t.transform, mat)
+
+	return product, nil
+}
+
+func (t *SparseTfidfTransformer) FitTransform(mat mat64.Matrix) (mat64.Matrix, error) {
 	return t.Fit(mat).Transform(mat)
 }
